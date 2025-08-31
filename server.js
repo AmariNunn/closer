@@ -18,7 +18,7 @@ app.get('/', (req, res) => {
     <p><strong>Environment:</strong> ${process.env.NODE_ENV || 'development'}</p>
     <p><strong>OpenAI Key:</strong> ${process.env.OPENAI_API_KEY ? 'Set' : 'Missing'}</p>
     <p><strong>Twilio:</strong> ${process.env.TWILIO_AUTH_TOKEN ? 'Set' : 'Missing'}</p>
-    <a href="/test-ai">Test OpenAI</a>
+    <a href="/test-ai">Test OpenAI</a> | <a href="/test-websocket">Test WebSocket</a>
   `);
 });
 
@@ -45,12 +45,39 @@ app.get('/test-ai', async (req, res) => {
   }
 });
 
+// Test WebSocket connection to OpenAI
+app.get('/test-websocket', (req, res) => {
+  const testWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01', {
+    headers: {
+      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+      'OpenAI-Beta': 'realtime=v1'
+    }
+  });
+  
+  testWs.on('open', () => {
+    console.log('WebSocket test: Connected to OpenAI');
+    res.json({ status: 'SUCCESS', message: 'WebSocket to OpenAI works!' });
+    testWs.close();
+  });
+  
+  testWs.on('error', (error) => {
+    console.error('WebSocket test error:', error);
+    res.json({ status: 'FAILED', error: error.message });
+  });
+  
+  setTimeout(() => {
+    if (testWs.readyState === WebSocket.CONNECTING) {
+      testWs.close();
+      res.json({ status: 'TIMEOUT', message: 'WebSocket connection timed out' });
+    }
+  }, 5000);
+});
+
 // Twilio voice webhook
 app.post('/twiml', (req, res) => {
   const host = req.get('host');
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>Please wait while we connect to the AI voice assistant.</Say>
   <Connect>
     <Stream url="wss://${host}/media-stream" />
   </Connect>
@@ -88,10 +115,20 @@ wss.on('connection', (ws) => {
       session: {
         model: 'gpt-4o-realtime-preview-2024-10-01',
         voice: 'alloy',
-        instructions: 'You are a voice agent for a moving company. Greet warmly, ask for name, from/to addresses, moving date, items. Confirm and end.',
-        temperature: 0.8,
+        instructions: 'You are a professional moving company assistant. Speak clearly and naturally. Ask for customer name, pickup address, delivery address, moving date, and any special items. Be conversational and helpful.',
+        temperature: 0.7,
+        max_response_output_tokens: 4096,
         input_audio_format: 'g711_ulaw',
-        output_audio_format: 'g711_ulaw'
+        output_audio_format: 'g711_ulaw',
+        input_audio_transcription: {
+          model: 'whisper-1'
+        },
+        turn_detection: {
+          type: 'server_vad',
+          threshold: 0.5,
+          prefix_padding_ms: 300,
+          silence_duration_ms: 200
+        }
       }
     }));
   });
