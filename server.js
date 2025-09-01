@@ -25,24 +25,53 @@ async function fetchBusinessData() {
 // Generate dynamic instructions based on business data
 function generateInstructions(businessData) {
   if (!businessData) {
-    return 'You are a professional moving company assistant. Speak clearly and naturally. Ask for customer name, pickup address, delivery address, moving date, and any special items. Be conversational and helpful.';
+    return 'You are a professional business assistant. Speak clearly and naturally. Help customers with their inquiries and gather any necessary information. Be conversational and helpful.';
   }
 
-  return `You are a professional assistant for ${businessData.name || 'our moving company'}. 
-${businessData.description ? `Company info: ${businessData.description}` : ''}
-${businessData.services ? `Our services include: ${businessData.services.join(', ')}.` : ''}
-${businessData.hours ? `Our business hours are: ${businessData.hours}.` : ''}
-${businessData.phone ? `Our phone number is ${businessData.phone}.` : ''}
-${businessData.email ? `Our email is ${businessData.email}.` : ''}
+  // Build instructions dynamically based on available data
+  let instructions = `You are a professional assistant for ${businessData.name || 'this business'}. `;
+  
+  if (businessData.description) {
+    instructions += `About the business: ${businessData.description}. `;
+  }
+  
+  if (businessData.services && Array.isArray(businessData.services)) {
+    instructions += `Our services include: ${businessData.services.join(', ')}. `;
+  } else if (businessData.services) {
+    instructions += `Our services: ${businessData.services}. `;
+  }
+  
+  if (businessData.hours) {
+    instructions += `Our business hours are: ${businessData.hours}. `;
+  }
+  
+  if (businessData.phone) {
+    instructions += `Our phone number is ${businessData.phone}. `;
+  }
+  
+  if (businessData.email) {
+    instructions += `Our email is ${businessData.email}. `;
+  }
+  
+  if (businessData.address) {
+    instructions += `Our location is: ${businessData.address}. `;
+  }
+  
+  if (businessData.website) {
+    instructions += `Our website is: ${businessData.website}. `;
+  }
 
-Speak clearly and naturally. Ask for customer name, pickup address, delivery address, moving date, and any special items. 
-Be conversational and helpful. Use the business information above to provide accurate details about our company when asked.`;
+  instructions += `
+
+Speak clearly and naturally. Help customers with their inquiries, provide information about our business, and gather any necessary contact information or details about their needs. Be conversational, helpful, and professional. Use the business information above to provide accurate details when asked.`;
+
+  return instructions;
 }
 
 // Status page
 app.get('/', (req, res) => {
   res.send(`
-    <h1>Moving Company AI Agent</h1>
+    <h1>AI Business Assistant</h1>
     <h2>Status: Running</h2>
     <p><strong>Environment:</strong> ${process.env.NODE_ENV || 'development'}</p>
     <p><strong>OpenAI Key:</strong> ${process.env.OPENAI_API_KEY ? 'Set' : 'Missing'}</p>
@@ -72,7 +101,7 @@ app.get('/test-ai', async (req, res) => {
       },
       body: JSON.stringify({
         model: 'gpt-4',
-        messages: [{ role: 'user', content: 'Say "Hello from moving company AI"' }],
+        messages: [{ role: 'user', content: 'Say "Hello from AI business assistant"' }],
         max_tokens: 20
       })
     });
