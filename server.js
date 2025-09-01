@@ -212,6 +212,7 @@ wss.on('connection', async (ws) => {
   ws.on('message', (data) => {
     try {
       const message = JSON.parse(data);
+      console.log('Received Twilio message:', message.event, message);
       
       switch (message.event) {
         case 'connected':
@@ -219,18 +220,24 @@ wss.on('connection', async (ws) => {
           break;
           
         case 'start':
-          // CRITICAL: Extract streamSid correctly
-          streamSid = message.start.streamSid;
-          console.log('Stream started:', streamSid);
+          // CRITICAL: Extract streamSid correctly - try both locations
+          streamSid = message.start?.streamSid || message.streamSid;
+          console.log('Stream started with SID:', streamSid);
+          if (!streamSid) {
+            console.error('Failed to extract streamSid from message:', message);
+          }
           break;
           
         case 'media':
           // Only forward audio if OpenAI is ready
-          if (openaiWs.readyState === WebSocket.OPEN && message.media.payload) {
+          if (openaiWs.readyState === WebSocket.OPEN && message.media?.payload) {
+            console.log('Forwarding audio to OpenAI');
             openaiWs.send(JSON.stringify({
               type: 'input_audio_buffer.append',
               audio: message.media.payload
             }));
+          } else {
+            console.log('Cannot forward audio - OpenAI ready:', openaiWs.readyState === WebSocket.OPEN, 'payload present:', !!message.media?.payload);
           }
           break;
           
@@ -271,11 +278,14 @@ wss.on('connection', async (ws) => {
         case 'response.audio.delta':
           // CRITICAL: Send audio response back to Twilio
           if (streamSid && message.delta) {
+            console.log('Sending audio to Twilio, streamSid:', streamSid);
             ws.send(JSON.stringify({
               event: 'media',
               streamSid: streamSid,
               media: { payload: message.delta }
             }));
+          } else {
+            console.log('Cannot send audio - streamSid:', streamSid, 'delta present:', !!message.delta);
           }
           break;
           
