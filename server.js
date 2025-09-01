@@ -10,6 +10,35 @@ const PORT = process.env.PORT || 3000;
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
+// Function to fetch business data from SkyIQ
+async function fetchBusinessData() {
+  try {
+    const response = await fetch('https://skyiq.app/api/business/3');
+    const businessData = await response.json();
+    return businessData;
+  } catch (error) {
+    console.error('Error fetching business data:', error);
+    return null;
+  }
+}
+
+// Generate dynamic instructions based on business data
+function generateInstructions(businessData) {
+  if (!businessData) {
+    return 'You are a professional moving company assistant. Speak clearly and naturally. Ask for customer name, pickup address, delivery address, moving date, and any special items. Be conversational and helpful.';
+  }
+
+  return `You are a professional assistant for ${businessData.name || 'our moving company'}. 
+${businessData.description ? `Company info: ${businessData.description}` : ''}
+${businessData.services ? `Our services include: ${businessData.services.join(', ')}.` : ''}
+${businessData.hours ? `Our business hours are: ${businessData.hours}.` : ''}
+${businessData.phone ? `Our phone number is ${businessData.phone}.` : ''}
+${businessData.email ? `Our email is ${businessData.email}.` : ''}
+
+Speak clearly and naturally. Ask for customer name, pickup address, delivery address, moving date, and any special items. 
+Be conversational and helpful. Use the business information above to provide accurate details about our company when asked.`;
+}
+
 // Status page
 app.get('/', (req, res) => {
   res.send(`
@@ -18,8 +47,18 @@ app.get('/', (req, res) => {
     <p><strong>Environment:</strong> ${process.env.NODE_ENV || 'development'}</p>
     <p><strong>OpenAI Key:</strong> ${process.env.OPENAI_API_KEY ? 'Set' : 'Missing'}</p>
     <p><strong>Twilio:</strong> ${process.env.TWILIO_AUTH_TOKEN ? 'Set' : 'Missing'}</p>
-    <a href="/test-ai">Test OpenAI</a> | <a href="/test-websocket">Test WebSocket</a>
+    <a href="/test-ai">Test OpenAI</a> | <a href="/test-websocket">Test WebSocket</a> | <a href="/test-skyiq">Test SkyIQ</a>
   `);
+});
+
+// Test SkyIQ API connection
+app.get('/test-skyiq', async (req, res) => {
+  try {
+    const businessData = await fetchBusinessData();
+    res.json({ status: 'SUCCESS', data: businessData });
+  } catch (error) {
+    res.status(500).json({ status: 'FAILED', error: error.message });
+  }
 });
 
 // Test OpenAI connection
@@ -94,10 +133,14 @@ const server = app.listen(PORT, () => {
 // WebSocket server for voice streaming
 const wss = new WebSocket.Server({ server, path: '/media-stream' });
 
-wss.on('connection', (ws) => {
+wss.on('connection', async (ws) => {
   console.log('New WebSocket connection');
   
   let streamSid = '';
+  
+  // Fetch business data for this session
+  const businessData = await fetchBusinessData();
+  const instructions = generateInstructions(businessData);
   
   // Connect to OpenAI Realtime API
   const openaiWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01', {
@@ -115,7 +158,7 @@ wss.on('connection', (ws) => {
       session: {
         model: 'gpt-4o-realtime-preview-2024-10-01',
         voice: 'alloy',
-        instructions: 'You are a professional moving company assistant. Speak clearly and naturally. Ask for customer name, pickup address, delivery address, moving date, and any special items. Be conversational and helpful.',
+        instructions: instructions,
         temperature: 0.7,
         max_response_output_tokens: 4096,
         input_audio_format: 'g711_ulaw',
@@ -128,7 +171,19 @@ wss.on('connection', (ws) => {
           threshold: 0.5,
           prefix_padding_ms: 300,
           silence_duration_ms: 200
-        }
+        },
+        tools: [
+          {
+            type: 'function',
+            name: 'get_business_info',
+            description: 'Get current business information including services, hours, and contact details',
+            parameters: {
+              type: 'object',
+              properties: {},
+              required: []
+            }
+          }
+        ]
       }
     }));
   });
@@ -151,7 +206,7 @@ wss.on('connection', (ws) => {
   });
   
   // Handle OpenAI responses
-  openaiWs.on('message', (data) => {
+  openaiWs.on('message', async (data) => {
     const message = JSON.parse(data);
     
     if (message.type === 'response.audio.delta') {
@@ -165,6 +220,19 @@ wss.on('connection', (ws) => {
         event: 'clear',
         streamSid: streamSid
       }));
+    } else if (message.type === 'response.function_call_arguments.done') {
+      // Handle function calls
+      if (message.name === 'get_business_info') {
+        const freshBusinessData = await fetchBusinessData();
+        
+        openaiWs.send(JSON.stringify({
+          type: 'response.create',
+          response: {
+            modalities: ['audio'],
+            instructions: `Here's the current business information: ${JSON.stringify(freshBusinessData)}`
+          }
+        }));
+      }
     }
   });
   
