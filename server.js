@@ -28,7 +28,6 @@ function generateInstructions(businessData) {
     return 'You are a professional business assistant. Speak clearly and naturally. Help customers with their inquiries and gather any necessary information. Be conversational and helpful.';
   }
 
-  // Build instructions dynamically based on available data
   let instructions = `You are a professional assistant for ${businessData.name || 'this business'}. `;
   
   if (businessData.description) {
@@ -163,9 +162,10 @@ const server = app.listen(PORT, () => {
 const wss = new WebSocket.Server({ server, path: '/media-stream' });
 
 wss.on('connection', async (ws) => {
-  console.log('New WebSocket connection');
+  console.log('New Twilio WebSocket connection');
   
-  let streamSid = '';
+  // CRITICAL: Initialize streamSid as null
+  let streamSid = null;
   
   // Fetch business data for this session
   const businessData = await fetchBusinessData();
@@ -182,102 +182,135 @@ wss.on('connection', async (ws) => {
   openaiWs.on('open', () => {
     console.log('OpenAI WebSocket connected');
     
-    openaiWs.send(JSON.stringify({
-      type: 'session.update',
-      session: {
-        model: 'gpt-4o-realtime-preview-2024-10-01',
-        voice: 'alloy',
-        instructions: instructions,
-        temperature: 0.7,
-        max_response_output_tokens: 4096,
-        input_audio_format: 'g711_ulaw',
-        output_audio_format: 'g711_ulaw',
-        input_audio_transcription: {
-          model: 'whisper-1'
-        },
-        turn_detection: {
-          type: 'server_vad',
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 200
-        },
-        tools: [
-          {
-            type: 'function',
-            name: 'get_business_info',
-            description: 'Get current business information including services, hours, and contact details',
-            parameters: {
-              type: 'object',
-              properties: {},
-              required: []
-            }
+    // CRITICAL: Wait 250ms before sending session config
+    setTimeout(() => {
+      openaiWs.send(JSON.stringify({
+        type: 'session.update',
+        session: {
+          model: 'gpt-4o-realtime-preview-2024-10-01',
+          voice: 'alloy',
+          instructions: instructions,
+          temperature: 0.7,
+          max_response_output_tokens: 4096,
+          input_audio_format: 'g711_ulaw',
+          output_audio_format: 'g711_ulaw',
+          input_audio_transcription: {
+            model: 'whisper-1'
+          },
+          turn_detection: {
+            type: 'server_vad',
+            threshold: 0.5,
+            prefix_padding_ms: 300,
+            silence_duration_ms: 200
           }
-        ]
-      }
-    }));
+        }
+      }));
+    }, 250);
   });
   
   // Handle Twilio messages
   ws.on('message', (data) => {
-    const message = JSON.parse(data);
-    
-    if (message.event === 'start') {
-      streamSid = message.start.streamSid;
-      console.log('Stream started:', streamSid);
-    } else if (message.event === 'media') {
-      if (openaiWs.readyState === WebSocket.OPEN) {
-        openaiWs.send(JSON.stringify({
-          type: 'input_audio_buffer.append',
-          audio: message.media.payload
-        }));
+    try {
+      const message = JSON.parse(data);
+      
+      switch (message.event) {
+        case 'connected':
+          console.log('Twilio Media Stream connected');
+          break;
+          
+        case 'start':
+          // CRITICAL: Extract streamSid correctly
+          streamSid = message.start.streamSid;
+          console.log('Stream started:', streamSid);
+          break;
+          
+        case 'media':
+          // Only forward audio if OpenAI is ready
+          if (openaiWs.readyState === WebSocket.OPEN && message.media.payload) {
+            openaiWs.send(JSON.stringify({
+              type: 'input_audio_buffer.append',
+              audio: message.media.payload
+            }));
+          }
+          break;
+          
+        case 'stop':
+          console.log('Stream stopped');
+          break;
       }
+    } catch (error) {
+      console.error('Error processing Twilio message:', error);
     }
   });
   
   // Handle OpenAI responses
-  openaiWs.on('message', async (data) => {
-    const message = JSON.parse(data);
-    
-    if (message.type === 'response.audio.delta') {
-      ws.send(JSON.stringify({
-        event: 'media',
-        streamSid: streamSid,
-        media: { payload: message.delta }
-      }));
-    } else if (message.type === 'input_audio_buffer.speech_started') {
-      ws.send(JSON.stringify({
-        event: 'clear',
-        streamSid: streamSid
-      }));
-    } else if (message.type === 'response.function_call_arguments.done') {
-      // Handle function calls
-      if (message.name === 'get_business_info') {
-        const freshBusinessData = await fetchBusinessData();
-        
-        openaiWs.send(JSON.stringify({
-          type: 'response.create',
-          response: {
-            modalities: ['audio'],
-            instructions: `Here's the current business information: ${JSON.stringify(freshBusinessData)}`
+  openaiWs.on('message', (data) => {
+    try {
+      const message = JSON.parse(data);
+      
+      switch (message.type) {
+        case 'session.created':
+          console.log('OpenAI session created');
+          break;
+          
+        case 'session.updated':
+          console.log('OpenAI session updated');
+          break;
+          
+        case 'input_audio_buffer.speech_started':
+          // User started speaking - clear Twilio buffer
+          if (streamSid) {
+            console.log('User interruption detected');
+            ws.send(JSON.stringify({
+              event: 'clear',
+              streamSid: streamSid
+            }));
           }
-        }));
+          break;
+          
+        case 'response.audio.delta':
+          // CRITICAL: Send audio response back to Twilio
+          if (streamSid && message.delta) {
+            ws.send(JSON.stringify({
+              event: 'media',
+              streamSid: streamSid,
+              media: { payload: message.delta }
+            }));
+          }
+          break;
+          
+        case 'response.audio.done':
+          console.log('AI response complete');
+          break;
+          
+        case 'error':
+          console.error('OpenAI error:', message.error);
+          break;
       }
+    } catch (error) {
+      console.error('Error processing OpenAI message:', error);
     }
   });
   
-  // Handle closes and errors
+  // Handle connection cleanup
   ws.on('close', () => {
     console.log('Twilio WebSocket closed');
-    openaiWs.close();
+    if (openaiWs.readyState === WebSocket.OPEN) {
+      openaiWs.close();
+    }
   });
   
   openaiWs.on('close', () => {
     console.log('OpenAI WebSocket closed');
-    ws.close();
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.close();
+    }
   });
   
   openaiWs.on('error', (error) => {
     console.error('OpenAI WebSocket error:', error);
-    ws.close();
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.close();
+    }
   });
 });
