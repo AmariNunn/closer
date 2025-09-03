@@ -51,6 +51,7 @@ app.get('/', (req, res) => {
     <p><strong>SkyIQ:</strong> Connected</p>
     <div>
       <a href="/test-skyiq">Test SkyIQ Data</a> | 
+      <a href="/test-prompt">Test Fresh Prompt</a> |
       <a href="https://elevenlabs.io/app/talk-to?agent_id=${ELEVENLABS_AGENT_ID}" target="_blank">Test Agent</a>
     </div>
   `);
