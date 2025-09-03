@@ -136,14 +136,17 @@ wss.on('connection', async (ws) => {
         // Convert Twilio's µ-law audio to PCM for 11Labs
         try {
           const ulawBuffer = Buffer.from(message.media.payload, 'base64');
-          // For now, send the µ-law directly - 11Labs may handle conversion
-          // TODO: Add µ-law to PCM conversion if needed
+          const pcmBuffer = ulawToPcm(ulawBuffer);
+          
+          // Send PCM audio to 11Labs
           elevenWs.send(JSON.stringify({
             type: 'user_audio_chunk',
-            user_audio_chunk: message.media.payload
+            user_audio_chunk: pcmBuffer.toString('base64')
           }));
+          
+          console.log(`Converted ${ulawBuffer.length} bytes µ-law to ${pcmBuffer.length} bytes PCM for 11Labs`);
         } catch (error) {
-          console.error('Input audio processing error:', error);
+          console.error('Input audio conversion error:', error);
         }
       }
     }
