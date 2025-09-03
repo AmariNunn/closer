@@ -131,16 +131,19 @@ wss.on('connection', async (ws) => {
   elevenWs.on('open', () => {
     console.log('11Labs agent connected');
     
-    // Send configuration with SkyIQ prompt if available
+    // Send configuration with SkyIQ prompt and ensure first message
     const config = {
       type: 'conversation_initiation_client_data',
       conversation_config_override: {
-        agent: {}
+        agent: {
+          first_message: "Hi there! How can I help you today?"
+        }
       }
     };
 
     if (prompt) {
       config.conversation_config_override.agent.prompt = { prompt: prompt };
+      console.log('Sending SkyIQ prompt to agent');
     }
 
     elevenWs.send(JSON.stringify(config));
