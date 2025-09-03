@@ -10,16 +10,18 @@ const PORT = process.env.PORT || 3000;
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// SkyIQ API configuration
+// 11Labs Conversational AI Agent ID
+const ELEVENLABS_AGENT_ID = 'agent_0601k48kfwszftatpy3eh4rp0wa4';
+
+// SkyIQ API configuration (for business data only)
 const SKYIQ_API_KEY = 'skyiq_3_1756755581321_uthzi8f52i';
 const SKYIQ_BASE_URL = 'https://skyiq.app/api';
 const BUSINESS_ID = '3';
 
-// Cache for business data and prompts
+// Cache for business data
 let cachedBusinessData = null;
-let cachedPrompt = null;
 
-// Function to get business data from SkyIQ
+// Function to get business data from SkyIQ (for reference/logging)
 async function getBusinessData() {
   if (!cachedBusinessData) {
     try {
@@ -34,55 +36,22 @@ async function getBusinessData() {
   return cachedBusinessData;
 }
 
-// Function to get voice prompt from SkyIQ API
-async function getVoicePrompt() {
-  if (!cachedPrompt) {
-    try {
-      const response = await fetch(`${SKYIQ_BASE_URL}/voice-prompt/${BUSINESS_ID}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': SKYIQ_API_KEY
-        },
-        body: JSON.stringify({
-          callType: 'inbound',
-          customerIntent: 'general inquiry',
-          urgency: 'medium',
-          specificTopic: 'general'
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`SkyIQ API error: ${response.status}`);
-      }
-
-      const data = await response.json();
-      cachedPrompt = data.prompt;
-      console.log('Voice prompt loaded from SkyIQ');
-      
-    } catch (error) {
-      console.error('Failed to get voice prompt:', error);
-      cachedPrompt = `You are a professional assistant for Tri Creative Group. We sell custom apparel - shirts, mugs, and pens are our specialty. Shirts cost about $20 and mugs cost about $10, but prices vary. Speak clearly and naturally. Help customers with their inquiries and provide information about our services. Be conversational and helpful.`;
-    }
-  }
-  return cachedPrompt;
-}
-
-// Load data on startup
+// Load business data on startup
 getBusinessData();
-getVoicePrompt();
 
 // Status page
 app.get('/', (req, res) => {
   res.send(`
-    <h1>AI Business Assistant (11Labs + SkyIQ)</h1>
+    <h1>AI Business Assistant (11Labs Conversational AI)</h1>
     <h2>Status: Running</h2>
     <p><strong>Environment:</strong> ${process.env.NODE_ENV || 'development'}</p>
     <p><strong>11Labs Key:</strong> ${process.env.ELEVENLABS_API_KEY ? 'Set' : 'Missing'}</p>
     <p><strong>Twilio:</strong> ${process.env.TWILIO_AUTH_TOKEN ? 'Set' : 'Missing'}</p>
+    <p><strong>Agent ID:</strong> ${ELEVENLABS_AGENT_ID}</p>
     <p><strong>SkyIQ:</strong> Connected</p>
     <div>
-      <a href="/test-skyiq">Test SkyIQ Data</a>
+      <a href="/test-skyiq">Test SkyIQ Data</a> | 
+      <a href="https://elevenlabs.io/app/talk-to?agent_id=${ELEVENLABS_AGENT_ID}" target="_blank">Test Agent</a>
     </div>
   `);
 });
@@ -91,12 +60,10 @@ app.get('/', (req, res) => {
 app.get('/test-skyiq', async (req, res) => {
   try {
     const businessData = await getBusinessData();
-    const prompt = await getVoicePrompt();
-    
     res.json({ 
       status: 'SUCCESS', 
       businessData: businessData,
-      prompt: prompt.substring(0, 200) + '...'
+      agentId: ELEVENLABS_AGENT_ID
     });
   } catch (error) {
     res.status(500).json({ status: 'FAILED', error: error.message });
@@ -128,13 +95,9 @@ wss.on('connection', async (ws) => {
   console.log('New Twilio WebSocket connection');
   let streamSid = '';
 
-  // Get prompt from SkyIQ API
-  const instructions = await getVoicePrompt();
-  console.log('Using SkyIQ prompt for this call');
-
-  // Connect to 11Labs Realtime API
+  // Connect to 11Labs Conversational AI (not TTS)
   const elevenWs = new WebSocket(
-    'wss://api.elevenlabs.io/v1/realtime/ws?model=eleven_monolingual_v1',
+    `wss://api.elevenlabs.io/v1/convai/conversation?agent_id=${ELEVENLABS_AGENT_ID}`,
     {
       headers: {
         'Authorization': `Bearer ${process.env.ELEVENLABS_API_KEY}`
@@ -143,16 +106,19 @@ wss.on('connection', async (ws) => {
   );
 
   elevenWs.on('open', () => {
-    console.log('11Labs WebSocket connected');
-
-    // Initialize session with SkyIQ prompt
+    console.log('11Labs Conversational AI connected');
+    
+    // Send initial configuration for the conversation
     elevenWs.send(JSON.stringify({
-      type: 'session',
-      session: {
-        voice: 'Rachel',
-        conversation: instructions,
-        input_format: 'g711_ulaw',
-        output_format: 'g711_ulaw'
+      type: 'conversation_initiation_client_data',
+      conversation_config_override: {
+        agent: {
+          // The agent already has your prompt configured in the 11Labs dashboard
+          // But you can override settings here if needed
+        },
+        tts: {
+          // Voice settings (if you want to override the agent's default voice)
+        }
       }
     }));
   });
@@ -166,26 +132,44 @@ wss.on('connection', async (ws) => {
       console.log('Stream started:', streamSid);
     } else if (message.event === 'media') {
       if (elevenWs.readyState === WebSocket.OPEN) {
-        // Forward audio to 11Labs
+        // Forward audio to 11Labs Conversational AI
+        // Convert from base64 to the format expected by Conversational AI
         elevenWs.send(JSON.stringify({
-          type: 'input_audio_buffer.append',
-          audio: message.media.payload
+          type: 'user_audio_chunk',
+          user_audio_chunk: message.media.payload
         }));
-        // Commit after each chunk
-        elevenWs.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
       }
     }
   });
 
-  // Handle 11Labs responses
+  // Handle 11Labs Conversational AI responses
   elevenWs.on('message', (data) => {
     const message = JSON.parse(data);
+    
+    console.log('11Labs message type:', message.type);
 
-    if (message.type === 'output_audio_buffer.delta') {
+    if (message.type === 'conversation_initiation_metadata') {
+      console.log('Conversation initialized:', message.conversation_initiation_metadata_event);
+    } 
+    else if (message.type === 'agent_response_audio_delta') {
+      // Stream audio back to Twilio
       ws.send(JSON.stringify({
         event: 'media',
         streamSid: streamSid,
-        media: { payload: message.audio }
+        media: { payload: message.agent_response_audio_delta_event.audio_delta }
+      }));
+    }
+    else if (message.type === 'user_transcript') {
+      console.log('User said:', message.user_transcription_event.user_transcript);
+    }
+    else if (message.type === 'agent_response') {
+      console.log('Agent responded:', message.agent_response_event.agent_response);
+    }
+    else if (message.type === 'ping') {
+      // Respond to ping with pong
+      elevenWs.send(JSON.stringify({
+        type: 'pong',
+        event_id: message.ping_event.event_id
       }));
     }
   });
@@ -196,8 +180,8 @@ wss.on('connection', async (ws) => {
     elevenWs.close();
   });
 
-  elevenWs.on('close', () => {
-    console.log('11Labs WebSocket closed');
+  elevenWs.on('close', (code, reason) => {
+    console.log('11Labs WebSocket closed:', code, reason.toString());
     ws.close();
   });
 
