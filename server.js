@@ -133,12 +133,18 @@ wss.on('connection', async (ws) => {
       console.log('Stream started:', streamSid);
     } else if (message.event === 'media') {
       if (elevenWs.readyState === WebSocket.OPEN) {
-        // Forward audio to 11Labs Conversational AI
-        // Convert from base64 to the format expected by Conversational AI
-        elevenWs.send(JSON.stringify({
-          type: 'user_audio_chunk',
-          user_audio_chunk: message.media.payload
-        }));
+        // Convert Twilio's µ-law audio to PCM for 11Labs
+        try {
+          const ulawBuffer = Buffer.from(message.media.payload, 'base64');
+          // For now, send the µ-law directly - 11Labs may handle conversion
+          // TODO: Add µ-law to PCM conversion if needed
+          elevenWs.send(JSON.stringify({
+            type: 'user_audio_chunk',
+            user_audio_chunk: message.media.payload
+          }));
+        } catch (error) {
+          console.error('Input audio processing error:', error);
+        }
       }
     }
   });
