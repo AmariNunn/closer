@@ -152,13 +152,15 @@ wss.on('connection', async (ws) => {
     if (message.type === 'conversation_initiation_metadata') {
       console.log('Conversation initialized:', message.conversation_initiation_metadata_event);
     } 
-    else if (message.type === 'agent_response_audio_delta') {
-      // Stream audio back to Twilio
-      ws.send(JSON.stringify({
-        event: 'media',
-        streamSid: streamSid,
-        media: { payload: message.agent_response_audio_delta_event.audio_delta }
-      }));
+    else if (message.type === 'audio') {
+      // Handle audio data from Conversational AI
+      if (message.audio_event && message.audio_event.audio_base_64) {
+        ws.send(JSON.stringify({
+          event: 'media',
+          streamSid: streamSid,
+          media: { payload: message.audio_event.audio_base_64 }
+        }));
+      }
     }
     else if (message.type === 'user_transcript') {
       console.log('User said:', message.user_transcription_event.user_transcript);
