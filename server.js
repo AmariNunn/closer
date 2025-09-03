@@ -11,40 +11,6 @@ app.use(express.json());
 
 // Configuration
 const ELEVENLABS_AGENT_ID = 'agent_0601k48kfwszftatpy3eh4rp0wa4';
-const SKYIQ_API_KEY = 'skyiq_3_1756755581321_uthzi8f52i';
-const SKYIQ_BASE_URL = 'https://skyiq.app/api';
-const BUSINESS_ID = '3';
-
-// Function to get voice prompt from SkyIQ API
-async function getVoicePrompt(callContext = {}) {
-  try {
-    const response = await fetch(`${SKYIQ_BASE_URL}/voice-prompt/${BUSINESS_ID}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-API-Key': SKYIQ_API_KEY
-      },
-      body: JSON.stringify({
-        callType: callContext.callType || 'inbound',
-        customerIntent: callContext.customerIntent || 'general inquiry',
-        urgency: callContext.urgency || 'medium',
-        specificTopic: callContext.specificTopic || 'general'
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`SkyIQ API error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    console.log('Voice prompt fetched from SkyIQ');
-    return data.prompt;
-    
-  } catch (error) {
-    console.error('Failed to get voice prompt:', error);
-    return null;
-  }
-}
 
 // Status page
 app.get('/', (req, res) => {
@@ -53,31 +19,7 @@ app.get('/', (req, res) => {
     <h2>Status: Running</h2>
     <p><strong>11Labs Key:</strong> ${process.env.ELEVENLABS_API_KEY ? 'Set' : 'Missing'}</p>
     <p><strong>Agent ID:</strong> ${ELEVENLABS_AGENT_ID}</p>
-    <div>
-      <a href="/test-prompt">Test SkyIQ Prompt</a>
-    </div>
   `);
-});
-
-// Test prompt generation
-app.get('/test-prompt', async (req, res) => {
-  try {
-    const testContext = {
-      callType: 'inbound',
-      customerIntent: 'pricing inquiry',
-      urgency: 'medium',
-      specificTopic: 'custom shirts'
-    };
-    
-    const prompt = await getVoicePrompt(testContext);
-    res.json({ 
-      status: 'SUCCESS', 
-      context: testContext,
-      prompt: prompt
-    });
-  } catch (error) {
-    res.status(500).json({ status: 'FAILED', error: error.message });
-  }
 });
 
 // Twilio webhook
@@ -105,19 +47,6 @@ wss.on('connection', async (ws) => {
   console.log('New call connected');
   let streamSid = '';
 
-  // Get current context for this call
-  const currentHour = new Date().getHours();
-  const callContext = {
-    callType: 'inbound',
-    customerIntent: currentHour >= 9 && currentHour <= 17 ? 'general inquiry' : 'after hours inquiry',
-    urgency: 'medium',
-    specificTopic: 'general'
-  };
-
-  // Get fresh prompt from SkyIQ
-  const prompt = await getVoicePrompt(callContext);
-  console.log('Using SkyIQ prompt for this call');
-
   // Connect to 11Labs Conversational AI
   const elevenWs = new WebSocket(
     `wss://api.elevenlabs.io/v1/convai/conversation?agent_id=${ELEVENLABS_AGENT_ID}`,
@@ -131,22 +60,12 @@ wss.on('connection', async (ws) => {
   elevenWs.on('open', () => {
     console.log('11Labs agent connected');
     
-    // Send configuration with SkyIQ prompt and ensure first message
-    const config = {
-      type: 'conversation_initiation_client_data',
-      conversation_config_override: {
-        agent: {
-          first_message: "Hi there! How can I help you today?"
-        }
-      }
-    };
-
-    if (prompt) {
-      config.conversation_config_override.agent.prompt = { prompt: prompt };
-      console.log('Sending SkyIQ prompt to agent');
-    }
-
-    elevenWs.send(JSON.stringify(config));
+    // Start conversation with agent's default settings
+    elevenWs.send(JSON.stringify({
+      type: 'conversation_initiation_client_data'
+    }));
+    
+    console.log('Agent conversation started');
   });
 
   // Handle Twilio messages
